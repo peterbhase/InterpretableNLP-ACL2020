@@ -43,7 +43,7 @@ results_analysis.Rmd --> R markdown file that computes all empirical/statistical
 
 ## Reproducing Experiments 
 
-1. Task models: Training both prototype and blackbox models can be done with the `main.py` scripts in the text and tabular directories. See training reports in `saved_model` directory for training arguments.
+1. Task models: Training both prototype and blackbox models can be done with the `main.py` scripts in the text and tabular directories. See training reports in each `saved_model` directory for training arguments.
 
 2. Simulation test data: Simulation test data is collected with `gather-experiment-data.py` in either directory, using trained neural and prototype models.
 
