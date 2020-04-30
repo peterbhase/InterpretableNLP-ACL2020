@@ -1,0 +1,8 @@
+numpy>=1.15.1
+scipy>=1.1.0
+torch>=0.4.1
+torchvision==0.2.1
+sklearn
+pandas
+
+lime==0.1.1.29 

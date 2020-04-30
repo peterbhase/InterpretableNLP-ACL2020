@@ -1,0 +1,1725 @@
+---
+title: ""
+author: ""
+date: ""
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(extrafont)
+library(gridExtra)
+library(Cairo)
+library(readxl)
+library(lme4)
+library(brms)
+
+# font_import()
+loadfonts(device="win")
+
+```
+
+
+
+```{r define functions, include = FALSE}
+# define functions for later. some include small test cases
+
+read_user_input <- function(input){
+  # standardize formats for both data types
+  # uses adist function for edit distance
+  new_input <- c()
+  options <- c('pos','neg','positive','negative','above','below',
+               'abo','bel','above $50K','below $50K', 'above $50k','below $50k')
+  recodes <- c('pos','neg','pos','neg','above','below','above','below','above','below','above','below')
+  for (i in 1:length(input)){
+    value <- input[i]
+    any_matches <- FALSE
+    for (j in 1:length(options)){
+      edit_dist = adist(value,options[j])
+      if (!is.na(edit_dist)){
+        if (adist(value,options[j]) <= 2){ # set to 2 bc 3 is too high (given '' --> 'pos' dist)
+          new_value <- recodes[j]
+          new_input <- c(new_input,new_value)
+          any_matches <- TRUE
+          break
+        }
+      } 
+    }
+    if (! any_matches){
+      new_input <- c(new_input,NA)
+    }
+  }
+  return(new_input)
+}
+
+read_user_input(c('pos', 'neg', 'above$50k','belo','','Pos'))
+
+read_datasets <- function(base_folder){
+  # loads and combines all data for each of the 2 data domains x 2 tests possibilities
+  # forward-text, cf-text, forward-tab, cf-tab
+  # columns -- 
+  #   method: explanation method
+  #   user: id for user
+  #   pre_forward: user answer
+  #   post_forward: user answer
+  #   pre_cf: user answer
+  #   post_cf: user answer
+  #   user_rating: user rating (only for cf files)
+  
+  # add folders that will be searched through to get user data
+  possible_folders <- list.files(base_folder)
+  method_folders <- c()
+  for (folder in possible_folders){
+    if ((grepl('TAB',folder) | grepl('TEXT',folder)) & !grepl('CLEAN',folder)){
+      method_folders <- c(method_folders, folder)
+    }
+  }
+  
+  # init data frames
+  forward_text <- data.frame()
+  cf_text <- data.frame()
+  forward_tab <- data.frame()
+  cf_tab <- data.frame()
+  
+  # add to the above four datasets
+  for (folder in method_folders){
+    
+    method_name <- str_split(folder, '_')[[1]][1]
+    user_id <- str_split(folder, '_')[[1]][3]
+    folder_path <- file.path(base_folder,folder)
+      
+    files <- list.files(folder_path)
+
+    forward_pre_id <- which(sapply(files, function(name) grepl('forward-pre',name)))
+    forward_post_id <- which(sapply(files, function(name) grepl('forward-post',name)))
+    cf_pre_id <- which(sapply(files, function(name) grepl('counterfactual-pre',name)))
+    cf_post_id <- which(sapply(files, function(name) grepl('counterfactual-post',name)))
+    
+    forward_pre <- read_xlsx(file.path(folder_path, files[forward_pre_id])) %>%
+      mutate(pre = read_user_input(user))
+    forward_post <- read_xlsx(file.path(folder_path, files[forward_post_id])) %>%
+      mutate(post = read_user_input(user))
+    cf_pre <- read_xlsx(file.path(folder_path, files[cf_pre_id])) %>%
+      mutate(pre = read_user_input(user_prediction))
+    cf_post <- read_xlsx(file.path(folder_path, files[cf_post_id])) %>%
+      mutate(post = read_user_input(user_prediction),
+             rating = user_rating)
+    
+    forward <- left_join(forward_pre, forward_post, by = 'id') %>%
+      select(id, pre, post) %>%
+      mutate(method = method_name,
+             user = user_id)
+    cf <- left_join(cf_pre, cf_post, by = 'id') %>%
+      select(id, pre, post, rating) %>%
+      mutate(method = method_name,
+             user = user_id)
+    
+      
+    # save data 
+    if (grepl('TEXT',folder)){
+      forward_text <- bind_rows(forward_text, forward)
+      cf_text <- bind_rows(cf_text, cf)
+    }
+        
+    if(grepl('TAB', folder)){
+      forward_tab <- bind_rows(forward_tab, forward)
+      cf_tab <- bind_rows(cf_tab, cf)
+    }
+  }
+  
+  # return data_frames
+  return_list <- list()
+  return_list[[1]] <- forward_text
+  return_list[[2]] <- cf_text
+  return_list[[3]] <- forward_tab
+  return_list[[4]] <- cf_tab
+  
+  return(return_list)
+}
+
+
+
+# load learning data ratings
+read_learning_ratings <- function(base_folder){
+
+  # add folders that will be searched through to get user data
+  possible_folders <- list.files(base_folder)
+  method_folders <- c()
+  for (folder in possible_folders){
+    if ((grepl('TAB',folder) | grepl('TEXT',folder)) & !grepl('CLEAN',folder)){
+      method_folders <- c(method_folders, folder)
+    }
+  }
+  
+  # init data frames
+  text_learning <- data.frame()
+  tab_learning <- data.frame()
+  
+  # add to the above four datasets
+  for (folder in method_folders){
+    
+    str_list <- str_split(folder, '_')[[1]]
+    method_name <- str_list[1]
+    data_type <- str_list[2]
+    user_id <- str_list[3]
+    folder_path <- file.path(base_folder,folder)
+      
+    files <- list.files(folder_path)
+
+    learning_id <- which(sapply(files, function(name) grepl('learning-',name) & !grepl('blackbox',name)))
+    
+    learning_user <- read_xlsx(file.path(folder_path, files[learning_id])) %>%
+      mutate(rating = user_rating) %>%
+      select(id, rating, label, model) %>%
+      mutate(method = method_name,
+             data_type = data_type,
+             user = user_id)
+      
+    # save data 
+    if (grepl('TEXT',folder)){
+      text_learning <- bind_rows(text_learning, learning_user)
+    }
+        
+    if(grepl('TAB', folder)){
+      tab_learning <- bind_rows(tab_learning, learning_user)
+    }
+    
+  }
+  
+  return(list(text_learning,tab_learning))
+}
+
+add_forward_correctness <- function(df){
+  df <- df %>%
+    mutate(model_correct = (label==model),
+           pre_correct = (model==pre),
+           post_correct = (model == post))
+  return(df)
+}
+
+add_cf_correctness <- function(df){
+  df <- df %>%
+    mutate(model_correct = (label==model),
+           pre_correct = (perturbation_model == pre),
+           post_correct = (perturbation_model == post))
+  return(df)
+}
+
+
+p_value <- function(betas){
+  abs_mean_beta = abs(mean(betas))
+  centered_betas = betas - mean(betas)
+  outside_prop = mean(centered_betas < -abs_mean_beta) + mean(centered_betas > abs_mean_beta)
+  return(outside_prop)
+}
+
+
+bootstrapByIndex = function(id, data, bootTimes=100000, print_p = TRUE){
+  # resample data that is blocked according to id
+  where_na = is.na(data)
+  good_data = data[!where_na]
+  good_idx = id[!where_na]
+  
+  indPerID = tapply(1:length(good_data), good_idx, function(x){x})
+  lengthPerID = sapply(indPerID, length)
+  
+  stats <- rep(NA,bootTimes)
+  
+  for (bi in 1:bootTimes){
+    bootstrappedIDIndices = sample(x=1:length(indPerID), size=length(indPerID), replace=TRUE)
+    newDataLength = sum(lengthPerID[bootstrappedIDIndices], na.rm=TRUE)
+    allBootstrappedIndices = rep(NA, newDataLength)
+    endInd = 0
+    for (i in 1:length(bootstrappedIDIndices)){
+      startInd = endInd + 1
+      endInd = startInd + lengthPerID[bootstrappedIDIndices[i]] - 1
+      allBootstrappedIndices[startInd:endInd] = indPerID[[bootstrappedIDIndices[i]]]
+    }
+    res = good_data[allBootstrappedIndices]
+    stat <- mean(res)
+    stats[bi] <- stat
+  }
+  mean <- mean(stats)
+  quantiles <- quantile(stats,c(.025,.975))
+  lb <- quantiles[1]
+  ub <- quantiles[2]
+  p_value <- p_value(stats)
+  if (print_p){
+    str_format = sprintf('%.2f \u00B1 %.2f (p = %.4f)', 100*mean, 100*(ub-lb)/2, p_value)
+  }
+  else{
+    str_format = sprintf('%.4f \u00B1 %.4f', mean, (ub-lb)/2)
+  }
+  return(str_format)
+}
+
+
+bootstrapPre = function(dataframe, bootTimes=100000, print_p = TRUE){
+  # model based estimation of Pre
+  # resample questions but not users
+  
+  selection <- dataframe %>%
+    select(id, method, pre_correct) %>%
+    na.omit()
+  
+  good_data = selection$pre_correct
+  method = selection$method
+  good_idx = selection$id
+  
+  indPerID = tapply(1:length(good_data), good_idx, function(x){x})
+  lengthPerID = sapply(indPerID, length)
+  
+  stats <- matrix(nrow = bootTimes, ncol = 5)
+  
+  for (bi in 1:bootTimes){
+    bootstrappedIDIndices = sample(x=1:length(indPerID), size=length(indPerID), replace=TRUE)
+    newDataLength = sum(lengthPerID[bootstrappedIDIndices], na.rm=TRUE)
+    allBootstrappedIndices = rep(NA, newDataLength)
+    endInd = 0
+    for (i in 1:length(bootstrappedIDIndices)){
+      startInd = endInd + 1
+      endInd = startInd + lengthPerID[bootstrappedIDIndices[i]] - 1
+      allBootstrappedIndices[startInd:endInd] = indPerID[[bootstrappedIDIndices[i]]]
+    }
+    
+    model_pre_correct = good_data[allBootstrappedIndices]
+    model_method = method[allBootstrappedIndices]
+    model_id = good_idx[allBootstrappedIndices]
+    model_data = data.frame(pre_correct = model_pre_correct,
+                            id = model_id,
+                            method = model_method)
+    
+    model = glmer(pre_correct ~ (1|method), data = model_data, family = binomial)
+    
+    pre_probs <- sigmoid(coef(model)$'method')$'(Intercept)'
+    if(!isSingular(model)){
+      pre_probs <- sigmoid(coef(model)$'method')$'(Intercept)'
+      probs <- sigmoid(coef(model)$'method')$'(Intercept)'
+      stats[bi, ] <- probs
+    }
+    
+  }
+  
+  stats <- as.data.frame(stats)
+  names(stats) <- a_names
+  df <- stats %>%
+    gather(key = 'method', value = 'prob')
+  
+  summary <- df %>%
+    group_by(method) %>%
+    na.omit() %>%
+    summarise(n=n(),
+              mean = round(mean(prob),3),
+              CI = (quantile(prob,.975) - quantile(prob,.025)) / 2)
+  return(summary)
+}
+
+
+
+bootstrapTreatment = function(dataframe, bootTimes=100000, print_p = TRUE){
+  # estimate treatment while using model based estimation of Pre and non-parametric estimation of Post
+  # resample questions that are blocked according to id
+  
+  selection <- dataframe %>%
+    select(id, method, pre_correct, post_correct) %>%
+    na.omit()
+  
+  # these will have NAs. let models filter them out
+  good_pre = selection$pre_correct
+  good_post = selection$post_correct
+  method = selection$method
+  good_idx = selection$id
+  
+  indPerID = tapply(1:length(good_pre), good_idx, function(x){x})
+  lengthPerID = sapply(indPerID, length)
+  
+  stats <- matrix(nrow = bootTimes, ncol = 5)
+  
+  for (bi in 1:bootTimes){
+    bootstrappedIDIndices = sample(x=1:length(indPerID), size=length(indPerID), replace=TRUE)
+    newDataLength = sum(lengthPerID[bootstrappedIDIndices], na.rm=TRUE)
+    allBootstrappedIndices = rep(NA, newDataLength)
+    endInd = 0
+    for (i in 1:length(bootstrappedIDIndices)){
+      startInd = endInd + 1
+      endInd = startInd + lengthPerID[bootstrappedIDIndices[i]] - 1
+      allBootstrappedIndices[startInd:endInd] = indPerID[[bootstrappedIDIndices[i]]]
+    }
+    
+    ## ESTIMATE PRE CORRECT
+    model_pre_correct = good_pre[allBootstrappedIndices]
+    model_method = method[allBootstrappedIndices]
+    model_id = good_idx[allBootstrappedIndices]
+    model_data = data.frame(pre_correct = model_pre_correct,
+                            id = model_id,
+                            method = model_method) %>%
+      na.omit()
+    
+    model = glmer(pre_correct ~ (1|method), data = model_data, family = binomial)
+    
+    # only proceed if model correctly fit
+    # if (!isSingular(model)){
+    pre_probs <- sigmoid(coef(model)$'method')$'(Intercept)'
+    if (! (pre_probs[1] == pre_probs[2]) & ! (pre_probs[2] == pre_probs[3])){
+      pre_probs <- sigmoid(coef(model)$'method')#$'(Intercept)'
+    
+      ## ESTIMATE POST CORRECT
+      model_post_correct = good_post[allBootstrappedIndices]
+      model_method = method[allBootstrappedIndices]
+      model_id = good_idx[allBootstrappedIndices]
+      model_data = data.frame(post_correct = model_post_correct,
+                              id = model_id,
+                              method = model_method) %>%
+          na.omit() %>%
+        group_by(method) %>%
+        summarise(post_mean = mean(post_correct))
+      
+      
+      # if we're short a level, make a dataframe and join
+      if (length(pre_probs) < 5){
+        pre_probs = data.frame(method = row.names(pre_probs), pre_mean = pre_probs$`(Intercept)`)
+        means = left_join(model_data, pre_probs) %>%
+          arrange(method)
+        diffs = means$post_mean - means$pre_mean
+        stats[bi,] = diffs
+      }
+      
+      else{
+        # take difference and set stat
+        diffs = model_data$post_mean - pre_probs$`(Intercept)`
+        stats[bi,] = diffs
+      }
+    
+    }
+    
+    
+  }
+  
+  stats <- as.data.frame(stats)
+  names(stats) <- a_names
+  df <- stats %>%
+    gather(key = 'method', value = 'change')
+  
+  summary <- df %>%
+    group_by(method) %>%
+    na.omit() %>%
+    summarise(n_boots=n(),
+              mean_est = round(mean(change),4),
+              CI = round((quantile(change,.975) - quantile(change,.025)) / 2, 4),
+              p_value = round(p_value(change),4)) %>%
+    arrange(method) %>%
+    mutate(method = c('ANCHOR','COMP','DB','LIME','PROTOTYPE'))
+  
+  context_stats <- dataframe %>% 
+    group_by(method) %>%
+    summarise(n_pre = sum(!is.na(pre_correct)),
+              n_post = sum(!is.na(post_correct)))
+  
+  summary <- left_join(summary, context_stats)
+  return(summary)
+}
+
+block_resample = function(id, data){
+  # resamples data by id blocks, without resampling within blocks
+  indPerID = tapply(1:length(data), id, function(x){x})
+  lengthPerID = sapply(indPerID, length)
+  
+  bootstrappedIDIndices = sample(x=1:length(indPerID), size=length(indPerID), replace=TRUE)
+  newDataLength = sum(lengthPerID[bootstrappedIDIndices], na.rm=TRUE)
+  allBootstrappedIndices = rep(NA, newDataLength)
+  endInd = 0
+  for (i in 1:length(bootstrappedIDIndices)){
+    startInd = endInd + 1
+    endInd = startInd + lengthPerID[bootstrappedIDIndices[i]] - 1
+    allBootstrappedIndices[startInd:endInd] = indPerID[[bootstrappedIDIndices[i]]]
+  }
+  res = data[allBootstrappedIndices]
+  return(res)
+}
+
+get_block_resample_idx = function(id){
+  # return the idx that could be used to reorder a df, according to blocked resampling of data
+  # always set length of new to length of original by trimming off extra
+  indPerID = tapply(1:length(id), id, function(x){x})
+  lengthPerID = sapply(indPerID, length)
+  
+  num_idx = length(indPerID)
+  possible_idx = 1:num_idx
+  data_size = length(id)
+  
+  allBootstrappedIndices = rep(NA, data_size)
+  endInd = 0
+  # how long will this take?
+  while (sum(!is.na(allBootstrappedIndices)) < newDataLength){
+  #for (i in 1:length(bootstrappedIDIndices)){
+    i = sample(possible_idx, 1)
+    startInd = endInd + 1
+    endInd = startInd + lengthPerID[i] - 1
+    allBootstrappedIndices[startInd:endInd] = indPerID[[i]]
+  }
+  allBootstrappedIndices = allBootstrappedIndices[1:data_size]
+  return(allBootstrappedIndices)
+}
+
+
+block_resample_df = function(dataframe, id_name){
+  # return the idx that could be used to reorder a df, according to blocked resampling of data
+  # always set length of new to length of original by trimming off extra
+  
+  id = dataframe[[id_name]]
+  
+  indPerID = tapply(1:length(id), id, function(x){x})
+  lengthPerID = sapply(indPerID, length)
+  
+  num_idx = length(indPerID)
+  possible_idx = 1:num_idx
+  data_size = length(id)
+  
+  allBootstrappedIndices = rep(NA, data_size)
+  endInd = 0
+  while (sum(!is.na(allBootstrappedIndices)) < data_size){
+    i = sample(possible_idx, 1)
+    startInd = endInd + 1
+    endInd = startInd + lengthPerID[i] - 1
+    allBootstrappedIndices[startInd:endInd] = indPerID[[i]]
+  }
+  
+  # trim idx and subset
+  allBootstrappedIndices = allBootstrappedIndices[1:data_size]
+  res = dataframe[allBootstrappedIndices,]
+  
+  return(res)
+}
+
+bootstrapTreatmentGRID = function(dataframe, bootTimes=10000, na_omit = TRUE){
+  # resamples users
+  # resamples questions items with blocking
+  # estimate Pre with random effects model 
+  # estimate Post non-parametrically
+  # conditional decision to throw out NAs up front or during pre/post estimation
+  
+  selection <- dataframe %>%
+    select(id, method, domain, type, user, pre_correct, post_correct)
+  
+  if (na_omit){
+    selection <- selection %>% na.omit()
+  }
+  
+  methods_df<- data.frame(method = c('ANCHOR','COMP','DB','LIME','PROTOTYPE'))
+  
+  stats <- matrix(nrow = bootTimes, ncol = 5)
+  
+  # reorder <- function(var,idx) return(var[idx])
+  
+  for (bi in 1:bootTimes){
+ 
+    # resample users WITHIN METHODS
+    user_resample <- selection %>%
+      group_by(method) %>%
+      block_resample_df(., id_name = 'user') %>%
+      ungroup()
+    
+
+    # resample items
+    grid_resample <- block_resample_df(user_resample, id_name = 'id')
+    
+    (user_resample %>% group_by(method, user) %>% count())
+    (grid_resample %>% group_by(method, user) %>% count())
+    
+
+    ## ESTIMATE PRE CORRECT
+    model = glmer(pre_correct ~ (1|method), data = grid_resample, family = binomial)
+    
+    # only proceed if model correctly fit -- i.e. not all random intercepts are equal
+    (pre_probs <- sigmoid(coef(model)$'method')$'(Intercept)')
+    if (!isSingular(model)){
+      pre_probs <- sigmoid(coef(model)$'method')#$'(Intercept)'
+    
+      ## ESTIMATE POST CORRECT
+      post_means <- grid_resample %>%
+        group_by(method) %>%
+        summarise(post_mean = mean(post_correct, na.rm = TRUE)) %>%
+        arrange(desc(method)) %>%
+        right_join(methods_df)
+      
+      # if we're short a level, make a dataframe and join
+      if (length(pre_probs) < 5){
+        pre_probs = data.frame(method = row.names(pre_probs), pre_mean = pre_probs$`(Intercept)`)
+        means = left_join(post_means, pre_probs) %>%
+          arrange(method)
+        diffs = means$post_mean - means$pre_mean
+        stats[bi,] = diffs
+      }
+      
+      else{
+        # take difference and set stat
+        diffs = post_means$post_mean - pre_probs$`(Intercept)`
+        stats[bi,] = diffs
+      }
+      
+    
+    }
+    
+    
+  }
+  
+  stats <- as.data.frame(stats)
+  names(stats) <- a_names
+  df <- stats %>%
+    gather(key = 'method', value = 'change')
+  
+  summary <- df %>%
+    group_by(method) %>%
+    na.omit() %>%
+    summarise(n_boots=n(),
+              mean_est = round(mean(change),4),
+              CI = round((quantile(change,.975) - quantile(change,.025)) / 2, 4),
+              p_value = round(p_value(change),4),
+              str_format = sprintf('%.2f \u00B1 %.2f (p = %.4f)', 100*mean_est, 100*CI, p_value)) %>%
+    arrange(method) %>%
+    mutate(method = c('ANCHOR','COMP','DB','LIME','PROTOTYPE'))
+  
+  context_stats <- selection %>% 
+    group_by(method) %>%
+    summarise(n_pre = sum(!is.na(pre_correct)),
+              n_post = sum(!is.na(post_correct)))
+  
+  summary <- left_join(summary, context_stats)
+  return(summary)
+}
+
+
+
+bootstrapTreatmentGRIDbalanced = function(dataframe, balance_var, bootTimes=10000){
+  # resamples users
+  # resamples questions items with blocking
+  # estimate Pre with random effects model 
+  # estimate Post non-parametrically
+  # conditional decision to throw out NAs up front or during pre/post estimation
+  # takes weighted average of statistics based on balance_var
+  balance_vector <- na.omit(dataframe)[[balance_var]]
+  
+  selection <- dataframe %>%
+    select(id, method, domain, type, user, pre_correct, post_correct) %>%
+    na.omit() %>%
+    mutate(balance_var = balance_vector)
+  
+  balance_values <- selection %>% pull(balance_var) %>% unique()
+  
+  method_names = c('ANCHOR','COMP','DB','LIME','PROTOTYPE')
+  methods_df<- data.frame(method = method_names)
+  
+  
+  stats <- matrix(nrow = bootTimes, ncol = 5)
+  
+  # reorder <- function(var,idx) return(var[idx])
+  
+  for (bi in 1:bootTimes){
+ 
+    # resample users WITHIN METHODS
+    user_resample <- selection %>%
+      group_by(method) %>%
+      block_resample_df(., id_name = 'user') %>%
+      ungroup()
+    
+    # resample items
+    grid_resample <- block_resample_df(user_resample, id_name = 'id') %>%
+      mutate(method = factor(method, levels = method_names))
+    
+    # get n counts
+    n_counts <- grid_resample %>%
+      group_by(method, balance_var) %>%
+      count()
+    
+    allowed_levels <- grid_resample %>% pull(method) %>% unique()
+
+    ## ESTIMATE PRE CORRECT
+    model = glmer(pre_correct ~ (1|method) + balance_var, data = grid_resample, family = binomial)
+    
+    # only proceed if model correctly fit -- i.e. not all random intercepts are equal
+    if (!isSingular(model)){
+      
+      s = length(allowed_levels)
+      predict_vals <- data.frame(method = rep(allowed_levels,2),
+                           balance_var = c(rep(balance_values[1],s),rep(balance_values[2],s)))
+      predict_vals$pred_probs <- sigmoid(predict(model, predict_vals))  
+      predict_vals <- left_join(methods_df, predict_vals)
+      
+      # method means
+      pre_means <- predict_vals %>%
+        group_by(method, balance_var) %>%
+        summarise(pre_mean = mean(pred_probs)) %>%
+        left_join(n_counts, c('method','balance_var')) %>%
+        ungroup() %>%
+        group_by(method) %>%
+        summarise(pre_mean_weighted = weighted.mean(pre_mean, n)) %>%
+        arrange(method)
+    
+      ## ESTIMATE POST CORRECT
+      post_means <- grid_resample %>%
+        group_by(method, balance_var) %>%
+        summarise(post_mean = mean(post_correct)) %>%
+        left_join(n_counts, by = c('method','balance_var')) %>%
+        ungroup() %>%
+        group_by(method) %>%
+        summarise(post_mean_weighted = weighted.mean(post_mean, n)) %>%
+        arrange(method)
+      
+      # if we're short a level, make a dataframe and join
+      if (sum(!is.na(pre_means$pre_mean_weighted)) < 5){
+        post_means <- left_join(methods_df, post_means)
+        means = left_join(post_means, pre_means, by = 'method') %>%
+          arrange(method)
+        diffs = means$post_mean_weighted - means$pre_mean_weighted
+        stats[bi,] = diffs
+      }
+      
+      else{
+        # take difference and set stat
+        diffs = post_means$post_mean_weighted - pre_means$pre_mean_weighted
+        stats[bi,] = diffs
+      }
+      
+    
+    }
+    
+    
+  }
+  
+  stats <- as.data.frame(stats)
+  names(stats) <- a_names
+  df <- stats %>%
+    gather(key = 'method', value = 'change')
+  
+  summary <- df %>%
+    group_by(method) %>%
+    na.omit() %>%
+    summarise(n_boots=n(),
+              mean_est = round(mean(change),4),
+              CI = round((quantile(change,.975) - quantile(change,.025)) / 2, 4),
+              p_value = round(p_value(change),4),
+              str_format = sprintf('%.2f \u00B1 %.2f (p = %.4f)', 100*mean_est, 100*CI, p_value)) %>%
+    arrange(method) %>%
+    mutate(method = c('ANCHOR','COMP','DB','LIME','PROTOTYPE'))
+  
+  context_stats <- selection %>% 
+    group_by(method) %>%
+    summarise(n_pre = sum(!is.na(pre_correct)),
+              n_post = sum(!is.na(post_correct)))
+  
+  summary <- left_join(summary, context_stats)
+  return(summary)
+}
+
+
+
+
+bootstrapGRID = function(id, user, data, bootTimes=100000, print_p = TRUE){
+  # bootstrap that resamples users first, then resamples items while blocking by id
+  # NOT model based
+
+  # na.omit here
+  where_na = is.na(data)
+  good_data = data[!where_na]
+  good_idx = id[!where_na]
+  good_user = user[!where_na]
+  
+  indPerUser = tapply(1:length(good_data), good_user, function(x){x})
+  lengthPerUser = sapply(indPerUser, length)
+  
+  stats <- rep(NA,bootTimes)
+  
+  for (bi in 1:bootTimes){
+ 
+    # resample users   
+    bootstrappedUserIndices = sample(x=1:length(indPerUser), size=length(indPerUser), replace=TRUE)
+    newDataLength = sum(lengthPerUser[bootstrappedUserIndices], na.rm=TRUE)
+    allBootstrappedUserIndices = rep(NA, newDataLength)
+    endInd = 0
+    for (i in 1:length(bootstrappedUserIndices)){
+      startInd = endInd + 1
+      endInd = startInd + lengthPerUser[bootstrappedUserIndices[i]] - 1
+      allBootstrappedUserIndices[startInd:endInd] = indPerUser[[bootstrappedUserIndices[i]]]
+    }
+    
+    new_idx = good_idx[allBootstrappedUserIndices]
+    user_samp = good_data[allBootstrappedUserIndices]
+    
+    # resample items
+    indPerID = tapply(1:length(user_samp), new_idx, function(x){x})
+    lengthPerID = sapply(indPerID, length)
+  
+    bootstrappedIDIndices = sample(x=1:length(indPerID), size=length(indPerID), replace=TRUE)
+    newDataLength = sum(lengthPerID[bootstrappedIDIndices], na.rm=TRUE)
+    allBootstrappedIndices = rep(NA, newDataLength)
+    endInd = 0
+    for (i in 1:length(bootstrappedIDIndices)){
+      startInd = endInd + 1
+      endInd = startInd + lengthPerID[bootstrappedIDIndices[i]] - 1
+      allBootstrappedIndices[startInd:endInd] = indPerID[[bootstrappedIDIndices[i]]]
+    }
+    res = user_samp[allBootstrappedIndices]
+    stat <- mean(res)
+    stats[bi] <- stat
+  }
+  mean <- mean(stats)
+  quantiles <- quantile(stats,c(.025,.975))
+  lb <- quantiles[1]
+  ub <- quantiles[2]
+  p_value <- p_value(stats)
+  if (print_p){
+    str_format = sprintf('%.2f \u00B1 %.2f (p = %.4f)', 100*mean, 100*(ub-lb)/2, p_value)
+  }
+  else{
+    str_format = sprintf('%.4f \u00B1 %.4f', mean, (ub-lb)/2)
+  }
+  return(str_format)
+}
+
+
+
+
+bootstrapRatingsModel = function(dataframe, predictor, bootTimes=10000, na_omit = TRUE){
+  # resamples users
+  # resamples questions items with blocking
+  
+  x <- dataframe[[predictor]]
+
+  selection <- dataframe %>%
+    select(id, user_id, post_correct) %>%
+    mutate(predictor = x)
+  
+  stats <- rep(NA,bootTimes)
+  
+  # reorder <- function(var,idx) return(var[idx])
+  
+  for (bi in 1:bootTimes){
+ 
+    # resample users ACROSS METHODS
+    user_resample <- selection %>%
+      block_resample_df(., id_name = 'user_id')
+
+    # resample items
+    grid_resample <- block_resample_df(user_resample, id_name = 'id')
+    
+    ## ESTIMATE PRE CORRECT
+    model = glm(post_correct ~ predictor, data = grid_resample, family = binomial)
+    coef = model$coefficients[-1]
+    
+    stats[bi] = coef
+      
+  }
+  
+  return(stats)
+}
+
+bootstrapRatingsRelationship = function(dataframe, predictor, bootTimes=10000, na_omit = TRUE){
+  # resamples users
+  # resamples questions items with blocking
+  
+  x <- dataframe[[predictor]]
+  
+  selection <- dataframe %>%
+    select(id, user_id, rating, norm_rating, post_correct) %>%
+    mutate(predictor = x)
+  
+  stats <- matrix(nrow = bootTimes, ncol = 5)
+  if (predictor == 'norm_rating'){
+    predict_vals = data.frame(predictor = c(-2,-1,0,1,2))
+  } else{
+    predict_vals = data.frame(predictor = c(2,3,4,5,6))  
+  }
+  
+  
+  for (bi in 1:bootTimes){
+ 
+    # resample users ACROSS METHODS
+    user_resample <- selection %>%
+      block_resample_df(., id_name = 'user_id')
+
+    # resample items
+    grid_resample <- block_resample_df(user_resample, id_name = 'id')
+    
+    ## ESTIMATE PRE CORRECT
+    model = glm(post_correct ~ predictor, data = grid_resample, family = binomial)
+    
+    preds = predict(model, predict_vals)
+    
+    stats[bi,] = preds
+      
+  }
+  
+  stats = as.data.frame(sigmoid(stats))
+  
+  if (predictor == 'rating'){
+    names(stats) = c('two','three','four','five','six')  
+    stats <- stats %>%
+        mutate(three_to_four = four - three,
+               four_to_Five = five - four)
+  } else{
+    names(stats) = c('neg_two','neg_one','zero','one','two')  
+    stats <- stats %>%
+          mutate(zero_to_one = one - zero) %>%
+          mutate(neg_one_to_zero = zero - neg_one)
+  }
+          
+  summary = data.frame(val = names(stats),
+                       mean = apply(stats,2, mean),
+                       lb = apply(stats, 2, function(x){quantile(x,.025)}),
+                       ub = apply(stats, 2, function(x){quantile(x,.975)}))
+   
+  return(summary)
+}
+
+
+
+bootstrapRegressionToMean = function(dataframe, bootTimes=10000, na_omit = TRUE){
+  # resamples users
+  # resamples questions items with blocking
+
+  selection <- dataframe %>%
+    select(id, user_id, pre_correct, post_correct) %>%
+    na.omit()
+  
+  stats <- rep(NA,bootTimes)
+  
+  # reorder <- function(var,idx) return(var[idx])
+  
+  for (bi in 1:bootTimes){
+ 
+    # resample users ACROSS METHODS
+    user_resample <- selection %>%
+      block_resample_df(., id_name = 'user_id')
+
+    # resample items
+    grid_resample <- block_resample_df(user_resample, id_name = 'id')
+    
+    # make model data
+    model_data <- grid_resample %>%
+      group_by(user_id) %>%
+      summarise(n = n(), 
+                change = mean(post_correct - pre_correct),
+                pre_correct = mean(pre_correct)) %>%
+      filter(pre_correct > .5)
+    
+    model = lm(change ~ pre_correct, 
+               data = model_data, 
+               weights = n
+               )
+    coef = model$coefficients[-1]
+    
+    stats[bi] = coef
+      
+  }
+  mean <- mean(stats)
+  quantiles <- quantile(stats,c(.025,.975))
+  lb <- quantiles[1]
+  ub <- quantiles[2]
+  p_value <- p_value(stats)
+  str_format = sprintf('%.2f \u00B1 %.2f (p = %.4f)', 100*mean, 100*(ub-lb)/2, p_value)
+  return(str_format)
+}
+
+
+bootstrapDiffInMeans = function(dataframe, bootTimes=10000, na_omit = TRUE){
+  # resamples users
+  # resamples questions items with blocking
+
+  selection <- dataframe %>%
+    select(id, method, model_correct, user_id, rating)
+  
+  stats <- rep(NA,bootTimes)
+  
+  # reorder <- function(var,idx) return(var[idx])
+  
+  for (bi in 1:bootTimes){
+ 
+    # resample users
+    user_resample <- selection %>%
+      #group_by(method) %>%
+      block_resample_df(., id_name = 'user_id')
+
+    # resample items
+    grid_resample <- block_resample_df(user_resample, id_name = 'id')
+    
+    ## ESTIMATE PRE CORRECT
+    correctness_means <- grid_resample %>%
+      group_by(model_correct) %>%
+      summarise(mean = mean(rating, na.rm = TRUE)) %>%
+      arrange(model_correct) %>%
+      pull(mean)
+    diff = correctness_means[2] - correctness_means[1]
+    
+    stats[bi] = diff
+      
+  }
+  
+  mean <- mean(stats)
+  quantiles <- quantile(stats,c(.025,.975))
+  lb <- quantiles[1]
+  ub <- quantiles[2]
+  p_value <- p_value(stats)
+
+  str_format = sprintf('%.4f \u00B1 %.4f (p = %.4f)', mean, (ub-lb)/2, p_value)
+  
+  return(str_format)
+}
+
+
+
+sigmoid <- function(x){
+  return(1/(1+exp(-x)))
+}
+
+a_names <- c('Anchor','Comp','DB','LIME','Proto')
+
+```
+
+
+
+```{r load data, include=FALSE}
+
+base_folder <- 'Simulation Experiments'
+
+# load master files
+master_text_forward <- read_xlsx("Simulation Experiments/review-data/Master-Data-Files/master-forward.xlsx") %>%
+  mutate(label = read_user_input(label),
+         model = read_user_input(model))
+master_text_cf <- read_xlsx("Simulation Experiments/review-data/Master-Data-Files/master-counterfactual.xlsx") %>%
+  mutate(label = read_user_input(label),
+         model = read_user_input(model),
+         perturbation_model = read_user_input(perturbation_model))
+master_tab_forward <- read_xlsx("Simulation Experiments/adult-data/Master-Data-Files/master-forward.xlsx") %>%
+  mutate(label = read_user_input(label),
+         model = read_user_input(model))
+master_tab_cf <- read_xlsx("Simulation Experiments/adult-data/Master-Data-Files/master-counterfactual.xlsx") %>%
+  mutate(label = read_user_input(label),
+         model = read_user_input(model),
+         perturbation_model = read_user_input(perturbation_model))
+  
+# READ IN ALL EXPERIMENTAL DATA (EXCEPT LEARNING RATINGS)
+data_list <- read_datasets(base_folder)
+
+forward_text = data_list[[1]]
+forward_text = right_join(master_text_forward, forward_text)
+
+cf_text = data_list[[2]]
+cf_text = right_join(master_text_cf, cf_text)
+
+forward_tab = data_list[[3]] 
+forward_tab = right_join(master_tab_forward, forward_tab)
+
+cf_tab = data_list[[4]]
+cf_tab = right_join(master_tab_cf, cf_tab)
+
+# READ IN LEARNING RATINGS
+learning_list = read_learning_ratings(base_folder)
+text_learning_ratings <- learning_list[[1]]
+tab_learning_ratings <- learning_list[[2]]
+
+# add correctness
+forward_text = add_forward_correctness(forward_text)
+forward_tab = add_forward_correctness(forward_tab)
+cf_text = add_cf_correctness(cf_text)
+cf_tab = add_cf_correctness(cf_tab)
+
+# group all data together across tests/data domains
+all_data = forward_text %>%
+  select(id, method, user, pre_correct, post_correct) %>% 
+  mutate(domain = 'text', type = 'forward') %>%
+  bind_rows(cf_text %>% mutate(domain = 'text', type = 'cf')) %>%
+  bind_rows(forward_tab %>% mutate(domain = 'tab', type = 'forward')) %>%
+  bind_rows(cf_tab %>% mutate(domain = 'tab', type = 'cf')) %>%
+  select(id, method, user, type, domain, pre_correct, post_correct) %>%
+  mutate(user_id = paste(method, user))
+
+all_data %>% 
+  group_by(method, domain) %>%
+  na.omit() %>%
+  count() %>% 
+  arrange(domain,desc(n))
+
+all_data %>% 
+  group_by(method, type) %>%
+  na.omit() %>%
+  count() %>% 
+  arrange(type,desc(n))
+
+# and organize into 4 major dfs
+tab_data = all_data %>% filter(domain == 'tab')
+text_data = all_data %>% filter(domain == 'text')
+forward_data = all_data %>% filter(type == 'forward')
+cf_data = all_data %>% filter(type == 'cf')
+
+
+## check balance 
+
+all_data %>% 
+  group_by(method, domain, type) %>%
+  na.omit() %>%
+  count() %>% 
+  arrange(method, domain, type)
+
+
+```
+
+# Power Testing
+
+```{r power testing, warning = FALSE, message = FALSE}
+
+bt = 2000
+
+subset <- tab_data
+
+subset %>%
+  select(id, user, method, type, pre_correct, post_correct) %>%
+  group_by(method, type) %>%
+  summarise(n = n(),
+            pre = round(mean(pre_correct, na.rm = TRUE), 3),
+            pre_block_est = bootstrapByIndex(id, pre_correct, bootTimes = bt, print_p = FALSE),
+            pre_GRID = bootstrapGRID(id, user, pre_correct, bootTimes = bt, print_p = FALSE),
+            post = round(mean(post_correct, na.rm = TRUE), 3),
+            post_block_est = bootstrapByIndex(id, post_correct, print_p = FALSE),
+            post_GRID = bootstrapGRID(id, user, post_correct, print_p = FALSE),
+            treatment = round(mean(post_correct - pre_correct, na.rm = TRUE), 3),
+            block_est = bootstrapByIndex(id, post_correct - pre_correct, bootTimes = bt, print_p = FALSE),
+            GRID = bootstrapGRID(id, user, post_correct - pre_correct, bootTimes = bt, print_p = FALSE))
+
+bootstrapTreatmentGRID(subset, bootTimes = bt)
+bootstrapTreatmentGRIDbalanced(subset, balance_var = 'type', bootTimes = bt)
+
+
+
+```
+
+```{r efficiency test, include = FALSE, warning = FALSE, message = FALSE}
+
+subset <- tab_data
+
+start <- proc.time()
+
+bootstrapTreatmentGRIDbalanced(subset, balance_var = 'type', bootTimes = 10)
+t1 <- proc.time() - start
+
+bootstrapTreatmentGRIDbalanced(subset, balance_var = 'type', bootTimes = 100)
+t2 <- proc.time() - start
+
+bootstrapTreatmentGRIDbalanced(subset, balance_var = 'type', bootTimes = 1000)
+t3 <- proc.time() - start
+
+t1
+t2
+t3
+
+
+
+```
+
+
+# Modeling Tests
+
+```{r random effects model with pre accuracy, include = FALSE}
+
+model_method = glmer(pre_correct ~ 1|method, data = tab_data, family = binomial)
+model_id = glmer(pre_correct ~ (1|id), data = tab_data, family = binomial)
+model_full = glmer(pre_correct ~ (1|id) + (1|method), data = tab_data, family = binomial)
+
+summary(model_method)
+summary(model_id)
+summary(model_full)
+
+(method_probs <- sigmoid(coef(model_method)$'method'))
+(method_probs <- sigmoid(coef(model_id)$'id'))
+(method_probs <- sigmoid(coef(model_full)$'method'))
+
+id_probs_dist = coef(model_full)$'id'$'(Intercept)'
+hist(id_probs_dist)
+
+tab_data %>%
+  select(id, method, pre_correct) %>%
+  mutate(full_est = sigmoid(predict(model_full, .)),
+         method_est = sigmoid(predict(model_method, .))) %>%
+  na.omit() %>%
+  group_by(method) %>%
+  summarise(n = n(),
+            mean = round( mean(pre_correct, na.rm= TRUE), 3),
+            full_est = mean(full_est),
+            method_est = mean(method_est))
+
+```
+
+
+
+# Raw User Accuracies
+
+```{r raw user accuracies}
+bt = 10000
+
+# estimate pre by domain
+all_data %>%
+  select(id, domain, user_id, pre_correct, post_correct) %>%
+  na.omit() %>%
+  group_by(domain) %>%
+  summarise(n_pre = sum(!is.na(pre_correct)),
+            pre = round(mean(pre_correct, na.rm = TRUE), 4),
+            pre_est = bootstrapGRID(id, user_id, pre_correct, bootTimes = bt, print_p = FALSE)) %>%
+    arrange(domain)
+
+
+# estimate pre by type
+all_data %>%
+  select(id, type, user_id, pre_correct, post_correct) %>%
+  na.omit() %>%
+  group_by(type) %>%
+  summarise(n_pre = sum(!is.na(pre_correct)),
+            pre = round(mean(pre_correct, na.rm = TRUE), 4),
+            pre_est = bootstrapGRID(id, user_id, pre_correct, bootTimes = bt, print_p = FALSE))
+
+
+  
+# now by method as well, just point estimates
+  
+all_data %>%
+  select(id, domain, method, user_id, pre_correct, post_correct) %>%
+  na.omit() %>%
+  group_by(domain, method) %>%
+  summarise(n_pre = sum(!is.na(pre_correct)),
+            pre = round(mean(pre_correct, na.rm = TRUE), 4)) %>%#,
+            #pre_est = bootstrapGRID(id, user_id, pre_correct, bootTimes = bt, print_p = FALSE)) %>%
+    arrange(domain)
+
+
+all_data %>%
+  select(id, method, type, user_id, pre_correct, post_correct) %>%
+  na.omit() %>%
+  group_by(type, method) %>%
+  summarise(n_pre = sum(!is.na(pre_correct)),
+            pre = round(mean(pre_correct, na.rm = TRUE), 4)) %>%#,
+            #pre_est = bootstrapGRID(id, user_id, pre_correct, bootTimes = bt, print_p = FALSE)) %>%
+    arrange(type, method)
+
+```
+
+
+
+# Treatment Effect Estimation
+
+
+```{r estimate treatment effects, warning = FALSE, message  = FALSE}
+
+bt = 25000
+
+bootstrapTreatmentGRID(text_data, bootTimes = bt)
+
+bootstrapTreatmentGRID(tab_data, bootTimes = bt)
+
+bootstrapTreatmentGRID(forward_data, bootTimes = bt)
+
+bootstrapTreatmentGRID(cf_data, bootTimes = bt)
+
+
+```
+
+
+```{r difference in methods, include = FALSE}
+
+methodA = 'PROTOTYPE'
+methodB = 'DB'
+test_type = 'cf'
+domain= ''
+
+A <- all_data %>%
+  filter(method == methodA,
+         type == test_type) %>%
+  select(id, user, pre_correct, post_correct) %>%
+  na.omit()
+
+
+B <- all_data %>%
+  filter(method == methodB,
+         type == test_type) %>%
+  select(id, user, pre_correct, post_correct) %>%
+  na.omit()
+
+joined <- inner_join(B,A, by = 'id') %>%
+  mutate(diff = (post_correct.y - pre_correct.y) - (post_correct.x - pre_correct.x))
+
+joined %>%
+  summarise(n = n(),
+            methodB = bootstrapByIndex(id, post_correct.y - pre_correct.y, print_p = FALSE),
+            methodA = rbootstrapByIndex(id, post_correct.x - pre_correct.x, print_p = FALSE),
+            difference = round(mean(diff, na.rm = TRUE),3),
+            block_est = bootstrapByIndex(id, diff))
+
+
+```
+
+
+# Analyze Ratings
+
+
+```{r combine ratings & breakdown by model correctness, echo = FALSE}
+
+cf_text <- cf_text %>%
+  mutate(user_id = paste(method, user))
+
+cf_tab <- cf_tab %>% 
+  mutate(user_id = paste(method, user))
+
+all_text_ratings <- text_learning_ratings %>%
+  mutate(model_correct = label == model,
+         user_id = paste(method, user)) %>%
+  bind_rows(cf_text) %>%
+  select(id, user, user_id, method, model_correct, rating)
+
+all_tab_ratings <- tab_learning_ratings %>%
+  mutate(model_correct = label == model,
+         user_id = paste(method, user)) %>%
+  bind_rows(cf_tab) %>%
+  select(id, user, user_id, method, model_correct, rating)
+
+
+
+all_text_ratings %>%
+  na.omit() %>%
+  group_by(method) %>%
+  summarise(n = n(),
+            rating_mean = mean(rating),
+            est = bootstrapGRID(id, user, rating, bootTimes = 10000, print_p = FALSE),
+            sd = sd(rating),
+            mae = mean(abs(rating-rating_mean))) %>%
+  arrange(desc(rating_mean))
+
+all_tab_ratings %>%
+  na.omit() %>%
+  group_by(method) %>%
+  summarise(n = n(),
+            rating_mean = mean(rating),
+            est = bootstrapGRID(id, user, rating, bootTimes = 10000, print_p = FALSE),
+            sd = sd(rating),
+            mae = mean(abs(rating-rating_mean))) %>%
+  arrange(desc(rating_mean))
+
+# 
+# by model correctness
+all_text_ratings %>%
+  select(id, user, method, model_correct, rating) %>%
+  na.omit() %>%
+  group_by(model_correct) %>%
+  summarise(n = n(),
+            mean = mean(rating, na.rm = TRUE),
+            sd = sd(rating, na.rm = TRUE),
+            est = bootstrapGRID(id, user, rating, bootTimes = 10000, print_p = FALSE))
+
+bootstrapDiffInMeans(all_text_ratings %>%na.omit(), bootTimes = 10000)
+
+all_tab_ratings %>%
+  select(id, user, method, model_correct, rating) %>%
+  na.omit() %>%
+  group_by(model_correct) %>%
+  summarise(n = n(),
+            mean = mean(rating, na.rm = TRUE),
+            sd = sd(rating, na.rm = TRUE),
+            est = bootstrapGRID(id, user, rating, bootTimes = 10000, print_p = FALSE))
+
+bootstrapDiffInMeans(all_tab_ratings %>% na.omit(), bootTimes = 10000)
+
+
+```
+
+
+```{r do ratings predict forward treatment, include = FALSE}
+
+# text
+
+text_user_ratings = all_text_ratings %>%
+  na.omit() %>%
+  group_by(user, method) %>%
+  summarise(mean_rating = mean(rating))
+
+#
+
+forward_text_user = forward_text %>%
+  na.omit() %>%
+  group_by(user, method) %>%
+  summarise(n = n(),
+            post = mean(post_correct),
+            pre = mean(pre_correct)) %>%
+  filter (n >= 15) %>%
+  mutate(treatment = 100*(post-pre))
+
+forward_text_ratings = left_join(forward_text_user, text_user_ratings,  by = c('method','user'))
+
+forward_text_ratings %>% 
+  ggplot(aes(mean_rating, treatment)) + 
+  geom_point() + 
+  geom_smooth(method = 'lm', se = FALSE)
+
+summary(lm(treatment ~ mean_rating, data = forward_text_ratings))
+
+# tab
+
+tab_user_ratings = all_tab_ratings %>%
+  na.omit() %>%
+  group_by(user, method) %>%
+  summarise(mean_rating = mean(rating))
+
+forward_tab_user = forward_tab %>%
+  na.omit() %>%
+  group_by(user, method) %>%
+  summarise(n = n(),
+            post = mean(post_correct),
+            pre = mean(pre_correct)) %>%
+  filter(n >= 15) %>%
+  mutate(treatment = 100*(post-pre))
+
+forward_tab_ratings = left_join(forward_tab_user, tab_user_ratings, by = c('method','user'))
+
+forward_tab_ratings %>% 
+  ggplot(aes(mean_rating, treatment)) + 
+  geom_point() + 
+  geom_smooth(method = 'lm', se = FALSE)
+
+summary(lm(treatment ~ mean_rating, data = forward_tab_ratings))
+
+
+```
+
+
+```{r ratings and cf performance}
+
+bt = 15000
+
+### TEXT ###
+
+# make user-specific normalized ratings
+cf_text <- cf_text %>% 
+  mutate(user_id = paste(method,id)) %>%
+  group_by(user_id) %>%
+  mutate(norm_rating = (rating - mean(rating, na.rm = TRUE))/sd(rating, na.rm = TRUE)) %>%
+  ungroup()
+
+text_model_data = cf_text %>% 
+  na.omit() %>%
+  mutate(norm_factor = as.factor(round(norm_rating,1)))
+
+
+## ABS RATINGS ##
+
+# bootstrap coef
+boots = bootstrapRatingsModel(text_model_data, predictor = 'rating', bootTimes = bt)
+mean(boots)
+quantile(boots,c(.025,.975))
+
+# bootstrap predictions at rating quantiles
+summary = bootstrapRatingsRelationship(text_model_data, predictor = 'rating', bootTimes = bt)
+summary
+
+## NORM RATING ##
+
+# bootstrap coef
+boots = bootstrapRatingsModel(text_model_data, predictor = 'norm_rating', bootTimes = bt)
+mean(boots)
+quantile(boots,c(.025,.975))
+
+# bootstrap predictions at rating quantiles
+summary = bootstrapRatingsRelationship(text_model_data, predictor = 'norm_rating', bootTimes = bt)
+summary
+
+
+
+
+### TAB ###
+
+
+# make user-specific normalized ratings
+cf_tab <- cf_tab %>% 
+  mutate(user_id = paste(method,id)) %>%
+  group_by(user_id) %>%
+  mutate(norm_rating = (rating - mean(rating, na.rm = TRUE))/sd(rating, na.rm = TRUE)) %>%
+  ungroup()
+
+tab_model_data = cf_tab %>% 
+  na.omit() %>%
+  mutate(norm_factor = as.factor(round(norm_rating,1)))
+
+## ABS RATINGS ##
+
+# bootstrap coef
+boots = bootstrapRatingsModel(tab_model_data, predictor = 'rating', bootTimes = bt)
+mean(boots)
+quantile(boots,c(.025,.975))
+
+# bootstrap predictions at rating quantiles
+summary = bootstrapRatingsRelationship(tab_model_data, predictor = 'rating', bootTimes = bt)
+summary
+
+## NORM RATING ##
+
+# bootstrap coef
+boots = bootstrapRatingsModel(tab_model_data, predictor = 'norm_rating', bootTimes = bt)
+mean(boots)
+quantile(boots,c(.025,.975))
+
+# bootstrap predictions at rating quantiles
+summary = bootstrapRatingsRelationship(tab_model_data, predictor = 'norm_rating', bootTimes = bt)
+summary
+
+
+
+
+
+
+```
+
+
+```{r mean treatment by mean rating, include = FALSE}
+
+# overall cf treatment by ratings
+all_text_ratings <- text_learning_ratings %>%
+  select(id, user, method, rating) %>%
+  bind_rows(cf_text) %>%
+  select(id, user, method, rating)
+
+text_user_ratings = all_text_ratings %>%
+  na.omit() %>%
+  group_by(user, method) %>%
+  summarise(mean_rating = mean(rating))
+
+cf_text_user = cf_text %>%
+  na.omit() %>%
+  group_by(user, method) %>%
+  summarise(n=n(),
+            post = mean(post_correct),
+            pre = mean(pre_correct)) %>%
+  filter(n >= 15) %>%
+  mutate(treatment = 100* (post-pre))
+
+cf_text_ratings = left_join(cf_text_user, text_user_ratings, by = c('method','user'))
+
+cf_text_ratings %>% 
+  ggplot(aes(mean_rating, treatment)) + 
+  geom_point() + 
+  geom_smooth(method = 'lm', se = FALSE)
+
+summary(lm(treatment ~ mean_rating, data = cf_text_ratings))
+
+
+### tab
+
+
+# overall cf treatment by ratings
+all_tab_ratings <- tab_learning_ratings %>%
+  select(id, user, method, rating) %>%
+  bind_rows(cf_tab) %>%
+  select(id, user, method, rating)
+
+tab_user_ratings = all_tab_ratings %>%
+  na.omit() %>%
+  group_by(user, method) %>%
+  summarise(mean_rating = mean(rating))
+
+cf_tab_user = cf_tab %>%
+  na.omit() %>%
+  group_by(user, method) %>%
+  summarise(n=n(),
+            post = mean(post_correct),
+            pre = mean(pre_correct)) %>%
+  filter(n >= 15) %>%
+  mutate(treatment = 100* (post-pre))
+
+cf_tab_ratings = left_join(cf_tab_user, tab_user_ratings, by = c('method','user'))
+
+cf_tab_ratings %>% 
+  ggplot(aes(mean_rating, treatment)) + 
+  geom_point() + 
+  geom_smooth(method = 'lm', se = FALSE)
+
+summary(lm(treatment ~ mean_rating, data = cf_tab_ratings))
+
+```
+
+# Regression to mean
+
+```{r treatment by ratings plot, include = FALSE}
+
+
+model <- lm(treatment ~ mean_rating, data = forward_combined)
+summary(model)
+confint(model)
+
+model <- lm(treatment ~ mean_rating, data = cf_combined)
+summary(model)
+confint(model)
+
+(forward_plot <- forward_combined %>%
+  ggplot(aes(mean_rating, treatment)) + 
+  geom_point(shape = 3, size = 2.5) + 
+  scale_x_continuous(breaks = seq(3, 7, .5),
+                     limits = c(3, 7)) +
+  scale_y_continuous(breaks = 100*c(-.2, -.1, 0, .1, .2),
+                     limits  = 100*c(-.21, .21)) + 
+  labs(y="Change", x = "User Rating", title = "Forward Simulation") + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(family = "Times New Roman",
+                                    size = 18,
+                                   color = "black"),
+        axis.text.y = element_text(family = "Times New Roman",
+                                    size = 18,
+                                    color = "black"),    
+        axis.title.x = element_text(family = "Times New Roman",
+                                    size=22),
+        axis.title.y = element_text(family = "Times New Roman",
+                                    size=22,
+                                    angle=0,
+                                    vjust = .5),
+        plot.title = element_text(family = "Times New Roman",
+                                  size = 26,
+                                  hjust = .5))
+  )
+
+
+(cf_plot <- cf_combined %>%
+  ggplot(aes(mean_rating, treatment)) + 
+  geom_point(shape = 3, size = 2.5) + 
+  scale_x_continuous(breaks = seq(3,7,by=.5),
+                     limits = c(3, 7)) + 
+  scale_y_continuous(breaks = 100*c(-.2, -.1, 0, .1, .2),
+                     limits  = 100*c(-.21, .21)) + 
+  labs(y="Explanation \n     Effect", x = "User Rating", title = "Counterfactual Simulation") + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(family = "Times New Roman",
+                                    size = 18,
+                                   color = "black"),
+        axis.text.y = element_text(family = "Times New Roman",
+                                    size = 18,
+                                   color = "black"),    
+        axis.title.x = element_text(family = "Times New Roman",
+                                    size=22),
+        axis.title.y = element_text(family = "Times New Roman",
+                                    size=22,
+                                    angle=0,
+                                    vjust = .5,
+                                    color = "white"),
+        plot.title = element_text(family = "Times New Roman",
+                                  size = 26,
+                                  hjust = .5))
+  )
+
+
+ggsave(forward_plot, file = "forward_plot.png", type = 'cairo-png', width = 7, height = 5, dpi = 1000)
+ggsave(cf_plot, file = "cf_plot.png", type = 'cairo-png', width = 7, height = 5, dpi = 1000)
+
+
+
+```
+
+
+
+
+
+```{r relationship between baseline acc and treatment size, include = FALSE}
+
+# need to make sure result isn't simply regression to the mean
+
+grouped_data <- all_data %>%
+  na.omit() %>%
+  group_by(user_id, type, domain) %>%
+  summarise(n = n(),
+            pre = 100 * mean(pre_correct),
+            post = 100 *mean(post_correct),
+            pre_perc = pre) %>%
+  mutate(jump = post-pre) %>%
+  filter(n >= 10, pre > .45)
+
+
+grouped_data %>%
+  ggplot(aes(pre, jump)) + 
+  geom_point() + 
+  geom_smooth(method = 'lm', se = FALSE) + 
+  geom_vline(xintercept = mean(grouped_data$pre))
+
+
+(grouped_plot <- grouped_data %>%
+  ggplot(aes(pre_perc, jump)) + 
+  geom_point() + 
+  scale_x_continuous(breaks = 100*c(.5, .6, .7, .8),
+                     limits = 100*c(.5,.85)) + 
+  scale_y_continuous(breaks = 100*c(-.2,-.1,0,.1,.2,.2),
+                     limits  = 100*c(-.2,.2)) + 
+  # geom_smooth(method = 'lm', se = FALSE, col = 'red')  +
+  labs(y="Change", x = "Pre Accuracy", title = "Change by Pre Accuracy") + 
+  theme_classic() + 
+  theme(axis.text.x = element_text(family = "Times New Roman",
+                                    size = 18,
+                                   color = 'black'),
+        axis.text.y = element_text(family = "Times New Roman",
+                                    size = 18,
+                                   color = 'black'),    
+        axis.title.x = element_text(family = "Times New Roman",
+                                    size=22),
+        axis.title.y = element_text(family = "Times New Roman",
+                                    size=22,
+                                    angle=0,
+                                    vjust = .5),
+        plot.title = element_text(family = "Times New Roman",
+                                  size = 26,
+                                  hjust = .5)) + 
+    geom_vline(xintercept = mean(grouped_data$pre_perc), color = 'red')
+  )
+
+model <- lm(jump ~ pre_perc, data = grouped_data) 
+summary(model)
+confint(model)
+
+
+ggsave(grouped_plot, file = "pre_plot.png", type = 'cairo-png', width = 7, height = 5, dpi = 1000)
+
+```
+
+
+
+
+
+
+```{r qualitative analysis}
+
+
+cf_tab %>% 
+  group_by(id, method) %>%
+  summarise(n = n(),
+            label = label,
+            model = model,
+            correct = sum(user == model),
+            acc = correct/n)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
