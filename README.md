@@ -38,16 +38,17 @@ results_analysis.Rmd --> R markdown file that computes all empirical/statistical
 ## Requirements
 
 - Python 3.6
-- PyTorch 1.3
 - see 'requirements.txt' in each subdirectory for data domain specific requirements
 
 ## Reproducing Experiments 
 
-1. Task models: Training both prototype and blackbox models can be done with the `main.py` scripts in the text and tabular directories. See training reports in each `saved_model` directory for training arguments.
+1. Set-up: Install the requirements. Run `python -m spacy download en_core_web_lg`. Download the 840B.300d glove embeddings from https://nlp.stanford.edu/projects/glove/. 
 
-2. Simulation test data: Simulation test data is collected with `gather-experiment-data.py` in either directory, using trained neural and prototype models.
+2. Task models: Training both prototype and blackbox models can be done with the `main.py` scripts in the text and tabular directories. For text data, provide the glove path as `--emb-fn <file_path>`. See training reports in each `saved_model` directory for training arguments for hyperparameters to the prototype models. By default, the script trains blackbox models.
 
-3. Statistical results: `results_analysis.Rmd` computes all empirical/statistical analysis in the paper
+3. Simulation test data: Simulation test data is collected with `gather-experiment-data.py` in either directory, using trained neural and prototype models.
+
+4. Statistical results: `results_analysis.Rmd` computes all empirical/statistical analysis in the paper
 
 
 

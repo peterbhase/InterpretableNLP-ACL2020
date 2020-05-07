@@ -2,7 +2,8 @@ numpy>=1.15.1
 scipy>=1.1.0
 torch>=0.4.1
 torchvision==0.2.1
-sklearn
-pandas
+scikit-learn==0.19.2
+pandas==1.0.3
+spacy==2.2.4
 
 lime==0.1.1.29 

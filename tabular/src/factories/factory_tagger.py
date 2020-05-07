@@ -1,9 +1,8 @@
 """creates various tagger models"""
 import os.path
 import torch
-from src.models.tagger_birnn import TaggerBiRNN
-from src.models.tagger_proto_birnn import TaggerProtoBiRNN
-from src.models.tagger_proto_birnn_fixed_dim import TaggerProtoBiRNNFixed
+from src.models.tagger_mlp import TaggerMLP
+from src.models.tagger_proto_mlp import TaggerProtoMLP
 
 
 class TaggerFactory():
@@ -16,13 +15,13 @@ class TaggerFactory():
         tagger = torch.load(checkpoint_fn)
         tagger.gpu = gpu
 
-        tagger.word_seq_indexer.gpu = gpu # hotfix
+        # an amalgman of hotfixes to get everything on the same gpu
         tagger.tag_seq_indexer.gpu = gpu # hotfix
         if hasattr(tagger, 'char_embeddings_layer'):# very hot hotfix
             tagger.char_embeddings_layer.char_seq_indexer.gpu = gpu # hotfix
         if hasattr(tagger, 'word_embeddings_layer'):
             tagger.word_embeddings_layer.gpu = gpu
-        # reset gpu tags
+        # reset gpu tags 
         for m in tagger.modules():
             if hasattr(m, 'gpu'):
                 m.gpu = gpu
@@ -31,49 +30,28 @@ class TaggerFactory():
 
 
     @staticmethod
-    def create(args, word_seq_indexer, tag_seq_indexer, tag_sequences_train):
-        if args.model == 'BiRNN':
-            tagger = TaggerBiRNN(word_seq_indexer=word_seq_indexer,
+    def create(args, data_encoder, tag_seq_indexer):
+        if args.model == 'MLP':
+            tagger = TaggerMLP(data_encoder=data_encoder,
                                  tag_seq_indexer=tag_seq_indexer,
                                  class_num=tag_seq_indexer.get_class_num(),
                                  batch_size=args.batch_size,
-                                 rnn_hidden_dim=args.rnn_hidden_dim,
-                                 freeze_word_embeddings=args.freeze_word_embeddings,
+                                 input_dim = args.input_dim,
                                  dropout_ratio=args.dropout_ratio,
-                                 rnn_type=args.rnn_type,
                                  gpu=args.gpu,
                                  latent_dim=args.latent_dim,
-                                 pooling_type=args.pooling_type)
-        elif args.model == 'ProtoBiRNN':
-            tagger = TaggerProtoBiRNN(word_seq_indexer=word_seq_indexer,
+                                 hidden_dim=args.hidden_dim)
+        elif args.model == 'ProtoMLP':
+            tagger = TaggerProtoMLP(data_encoder=data_encoder,
                                  tag_seq_indexer=tag_seq_indexer,
                                  class_num=tag_seq_indexer.get_class_num(),
                                  batch_size=args.batch_size,
-                                 rnn_hidden_dim=args.rnn_hidden_dim,
-                                 freeze_word_embeddings=args.freeze_word_embeddings,
+                                 input_dim = args.input_dim,
                                  dropout_ratio=args.dropout_ratio,
-                                 rnn_type=args.rnn_type,
                                  num_prototypes_per_class = args.num_prototypes_per_class,
                                  proto_dim = args.proto_dim,
                                  gpu=args.gpu,
-                                 pretrained_path=os.path.join('saved_models','%s.hdf5' % args.pretrained_model),
-                                 max_pool_protos=args.max_pool_protos,
-                                 similarity_epsilon=args.similarity_epsilon,
-                                 hadamard_importance=args.hadamard_importance,
-                                 similarity_function_name = args.similarity_function_name
-                                 )
-        elif args.model == 'ProtoBiRNNFixed':
-            tagger = TaggerProtoBiRNNFixed(word_seq_indexer=word_seq_indexer,
-                                 tag_seq_indexer=tag_seq_indexer,
-                                 class_num=tag_seq_indexer.get_class_num(),
-                                 batch_size=args.batch_size,
-                                 rnn_hidden_dim=args.rnn_hidden_dim,
-                                 freeze_word_embeddings=args.freeze_word_embeddings,
-                                 dropout_ratio=args.dropout_ratio,
-                                 rnn_type=args.rnn_type,
-                                 num_prototypes_per_class = args.num_prototypes_per_class,
-                                 proto_dim = args.proto_dim,
-                                 gpu=args.gpu,
+                                 hidden_dim=args.hidden_dim,
                                  pretrained_path=os.path.join('saved_models','%s.hdf5' % args.pretrained_model),
                                  max_pool_protos=args.max_pool_protos,
                                  similarity_epsilon=args.similarity_epsilon,

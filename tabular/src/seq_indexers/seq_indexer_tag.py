@@ -16,11 +16,6 @@ class SeqIndexerTag(SeqIndexerBase):
         for item in item_sequence:
             if item in self.item2idx_dict:
                 idx_seq.append(self.item2idx_dict[item])
-            else:
-                if self.unk is not None:
-                    idx_seq.append(self.item2idx_dict[self.unk])
-                else:
-                    idx_seq.append(self.item2idx_dict[self.pad])
         return idx_seq
 
     def idx2items(self, idx_seq):

@@ -23,7 +23,7 @@ if __name__ == "__main__":
                         help='Train data in format defined by --data-io param.')
     parser.add_argument('--gpu', type=int, default=0, help='GPU device number, -1  means CPU.')
     parser.add_argument('--model', help='Model type.', choices=['MLP', 'ProtoMLP'],
-                        default='ProtoMLP')
+                        default='MLP')
     parser.add_argument('--load-name', '-l', default=None, help='name of model to be loaded.')
     parser.add_argument('--save-dir', '-s', default='saved_models',
                         help='Path to dir to save the trained model.')
@@ -56,7 +56,7 @@ if __name__ == "__main__":
     parser.add_argument('--num-prototypes-per-class', '-p', type=int, default=20, help='Number of prototypes per class for prototype layers')
     parser.add_argument('--proto-dim', type=int, default=16, help='latent space dimension for prototypes')
     parser.add_argument('--pre-eval', type=str2bool, default=True, help='Eval on test set before training')
-    parser.add_argument('--pretrained-model', type=str, default='mlp-16d', help='name of pretrained model used to init models')
+    parser.add_argument('--pretrained-model', type=str, default=None, help='name of pretrained model used to init models')
     parser.add_argument('--no-eval-til', type=int, default=0, help='No evaluation until the epoch supplied')
     parser.add_argument('--latent-dim', type=int, default=None, help='Dimension reduction before classification for black-box')
     parser.add_argument('--unfreeze-lin-layer', type=int, default=1000, help='Unfreeze lin layer in proto model after this many epochs')
@@ -151,8 +151,6 @@ if __name__ == "__main__":
     best_test_score = -1
     best_test_msg = 'N/A' # was 'N\A'
     patience_counter = 0
-
-    print(tagger.dim_red[0].bias)
 
     # Evaluate tagger   
     if args.pre_eval:# or args.load_name is not None:

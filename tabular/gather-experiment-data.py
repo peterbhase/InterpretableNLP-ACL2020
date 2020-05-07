@@ -24,21 +24,6 @@ def get_balanced_batches(word_sequences, tag_sequences, name2tagger_dict, batch_
     '''
     # learning data. validity data. counterfactual data
 
-    # # load data if path provided
-    # batches = []
-    # load_paths = [load_path_1, load_path_2, load_path_3]
-    # for load_path in load_paths:
-    #     if load_path is not None:
-    #         batch = []
-    #         data = pd.read_excel(load_path)
-    #         idx = data.idx
-    #         word_sequences = data.context
-    #         tag_sequences = data.tag
-    #         for i in range(len(idx)):
-    #             batch.append((idx, word_sequences[i], tag_sequences[i]))
-    #             batches.append(batch)
-
-
     assert batch_size % 4 == 0, "Batch size should be divisable by 4"
 
     TP_idx = []

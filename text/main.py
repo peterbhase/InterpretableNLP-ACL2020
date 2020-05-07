@@ -23,7 +23,7 @@ if __name__ == "__main__":
     parser.add_argument('--gpu', type=int, default=0, help='GPU device number, -1  means CPU.')
     parser.add_argument('--model', help='Tagger model.', choices=['BiRNN', 'BiRNNCNN', 'BiRNNCRF', 'BiRNNCNNCRF',
                                                                 'ProtoBiRNN','Attentive'],
-                        default='ProtoBiRNNFixed')
+                        default='BiRNN')
     parser.add_argument('--load-name', '-l', default=None, help='name of model to be loaded.')
     parser.add_argument('--save-dir', '-s', default='saved_models',
                         help='Path to dir to save the trained model.')
@@ -46,7 +46,7 @@ if __name__ == "__main__":
     parser.add_argument('--clip-grad', type=float, default=5, help='Clipping gradients maximum L2 norm.')
     parser.add_argument('--rnn-type', help='RNN cell units type.', choices=['Vanilla', 'LSTM', 'GRU'], default='LSTM')
     parser.add_argument('--rnn-hidden-dim', type=int, default=50, help='Number hidden units in the recurrent layer.')
-    parser.add_argument('--emb-fn', default='/playpen2/home/peter/xu/data/glove.840B.300d.txt', help='Path to word embeddings file.')
+    parser.add_argument('--emb-fn', default='/playpen3/home/peter/data/glove.840B.300d.txt', help='Path to word embeddings file.')
     parser.add_argument('--emb-dim', type=int, default=300, help='THIS MUST MATCH ABOVE FILE DIMENSIONALITY.')
     parser.add_argument('--emb-delimiter', default=' ', help='Delimiter for word embeddings file.')
     parser.add_argument('--emb-load-all', type=str2bool, default=False, help='Load all embeddings to model.', nargs='?',
@@ -65,10 +65,10 @@ if __name__ == "__main__":
                         help='Current cross-fold, 1<=cross-fold-id<=cross-folds-num (optional, for some datasets).')
     parser.add_argument('--verbose', type=str2bool, default=True, help='Show additional information.', nargs='?',
                         choices=['yes (default)', True, 'no', False])
-    parser.add_argument('--num-prototypes-per-class', '-p', type=int, default=5, help='Number of prototypes per class for prototype layers')
+    parser.add_argument('--num-prototypes-per-class', '-p', type=int, default=40, help='Number of prototypes per class for prototype layers')
     parser.add_argument('--proto-dim', type=int, default=100, help='latent space dimension for prototypes')
     parser.add_argument('--pre-eval', type=str2bool, default=True, help='Eval on test set before training')
-    parser.add_argument('--pretrained-model', type=str, default='attention', help='name of pretrained model used to init models')
+    parser.add_argument('--pretrained-model', type=str, default=None, help='name of pretrained model used to init models')
     parser.add_argument('--no-eval-til', type=int, default=0, help='No evaluation until the epoch supplied')
     parser.add_argument('--latent-dim', type=int, default=None, help='Dimension reduction before classification for black-box')
     parser.add_argument('--unfreeze-lin-layer', type=int, default=1000, help='Unfreeze lin layer after this many epochs')

@@ -737,7 +737,6 @@ if __name__ == "__main__":
     name2tagger_dict = {
         'blackbox' : blackbox_tagger,
         'prototype' : prototype_tagger,
-        #'prototype-v2' : prototype_tagger_2,
     }
 
     # all tags and predicted tags must be one of these
