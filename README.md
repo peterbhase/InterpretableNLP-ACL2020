@@ -1,5 +1,5 @@
 # Evaluating Explainable AI
-This is the codebase for the paper *Evaluating Explainable AI: Which Algorithmic Explanations Help Users Predict Model Behavior?*
+This is the codebase for "Evaluating Explainable AI: Which Algorithmic Explanations Help Users Predict Model Behavior?" (*ACL 2020*) [[pdf]](https://arxiv.org/abs/2005.01831)  
 
 ## Repository Structure
 
@@ -50,6 +50,14 @@ results_analysis.Rmd --> R markdown file that computes all empirical/statistical
 
 4. Statistical results: `results_analysis.Rmd` computes all empirical/statistical analysis in the paper
 
+## Citation
 
+@inproceedings{hase_evaluating_2020,
+    title={Evaluating Explainable AI: Which Algorithmic Explanations Help Users Predict Model Behavior?},
+    author={Peter Hase and Mohit Bansal},
+    booktitle={ACL},
+    url={https://arxiv.org/abs/2005.01831},
+    year={2020}
+}
 
 
