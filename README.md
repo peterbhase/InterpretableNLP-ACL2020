@@ -52,6 +52,7 @@ results_analysis.Rmd --> R markdown file that computes all empirical/statistical
 
 ## Citation
 
+```
 @inproceedings{hase_evaluating_2020,
     title={Evaluating Explainable AI: Which Algorithmic Explanations Help Users Predict Model Behavior?},
     author={Peter Hase and Mohit Bansal},
@@ -59,5 +60,5 @@ results_analysis.Rmd --> R markdown file that computes all empirical/statistical
     url={https://arxiv.org/abs/2005.01831},
     year={2020}
 }
-
+```
 
