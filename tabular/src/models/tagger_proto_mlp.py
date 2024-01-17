@@ -31,6 +31,7 @@ class TaggerProtoMLP(TaggerBase):
         self.proto_dim = proto_dim
         self.max_pool = max_pool_protos
         self.hadamard_importance = hadamard_importance
+        self.dim_red_bool = dim_red_bool
 
         # prototype parameters
         self.prototypes_shape = (self.num_prototypes, self.proto_dim, 1) # the last dimension is 1 since the prototype vectors are used as a conv1d filter weight
@@ -123,7 +124,7 @@ class TaggerProtoMLP(TaggerBase):
         del state_dict['lin_layer.weight']
         del state_dict['lin_layer.bias']
         # delete dim reduction weights if they don't match pretrained model's dimensionality
-        if dim_red_bool:
+        if self.dim_red_bool:
             if state_dict['dim_red.0.weight'].shape != self.dim_red[0].weight.shape:
                 print("Dimension reduction matrix from pretrained model does not match this model's in shape!")
                 del state_dict['dim_red.0.weight']
@@ -228,7 +229,7 @@ class TaggerProtoMLP(TaggerBase):
 
         # initialize
         _initialize_lin_layer(self)
-        if dim_red_bool:
+        if self.dim_red_bool:
             self.dim_red.apply(_initialize_random_projection) 
         else:
             self.dim_red.apply(_initalize_frozen_dim_red) 
